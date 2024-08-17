@@ -27,7 +27,7 @@ def review_model_t5_preprocessing(request):
         review['content'] = split_content_into_sentences(review['content'])  # 이후 \n으로 구분된 문장으로 변경
     
 
-    topic_name = os.environ["TOPIC_REVIEW_T5"]
+    topic_name = os.environ["TOPIC_NAME"]
     message_data = json.dumps(request_json, ensure_ascii=False).encode("utf-8-sig")
     topic_path = publisher.topic_path(project_id, topic_name)
     print(f"Publishing message to {topic_name}")

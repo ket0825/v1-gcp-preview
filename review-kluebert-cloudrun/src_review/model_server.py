@@ -1,20 +1,21 @@
 from typing import List, Dict
 import argparse
-import json
 import os
 from google.cloud import storage
 from google.auth import default
 import joblib
 import transformers
 from fastapi import FastAPI, HTTPException, APIRouter, Request
+from fastapi.responses import RedirectResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import requests
+import json
 
 from modeling.model import ABSAModel
 from utils.model_utils import device_setting, load_model
 from deploy.stream_log import StreamLog
-from deploy.pydantic_models import KlueBertReviewRequest, KlueBertReviewResponse
+from deploy.pydantic_models import PubsubRequest, KlueBertReviewRequest
 from modeling.trainer import inference_fn
 
 
@@ -47,7 +48,7 @@ def load_bert_model(config: argparse.Namespace):
     #  # 특정 버킷의 객체(파일) 목록 조회    
     # bucket = storage_client.get_bucket(bucket_name)
     # blobs = bucket.list_blobs()
-
+    
     # print(f"\nObjects in bucket '{bucket_name}':")
     # for blob in blobs:
     #     print(f" - {blob.name}")
@@ -59,14 +60,14 @@ def load_bert_model(config: argparse.Namespace):
     local_model_path = './tmp/pytorch_model.bin'
     metadata_path = './tmp/meta.bin'    
     
-    # print(f"Downloading model to {local_model_path}")    
-    # model_blob.download_to_filename(local_model_path, raw_download=True)        
+    # print(f"Downloading model to {local_model_path}")     
+    # model_blob.download_to_filename(local_model_path)        
     # log.info(f"Model downloaded to {local_model_path}")
-    # metadata_blob.download_to_filename(metadata_path, raw_download=True)
-    # log.info(f"Metadata (label) downloaded to {metadata_path}")
+    # metadata_blob.download_to_filename(metadata_path)
+    # log.info(f"Metadata (label) downloaded to {metadata_path}")    
     
     try:        
-        log.info("Loading metadata... raw_download=True version")
+        log.info("Loading metadata...")
         metadata = joblib.load(metadata_path)
     except Exception as e:    
         log.error(f"Error loading metadata: {e}")
@@ -109,6 +110,8 @@ def inference(
     log.info(f"first result our topics: {result[0]['our_topics']}")    
     return result
 
+
+
 router = APIRouter()
 
 @router.get("/")
@@ -116,27 +119,47 @@ async def root():
     return {"message": "klue-bert-review-tagging"}
 
 @router.post("/predict")
-def predict(packet: KlueBertReviewRequest):            
-    config = app.state.config        
-    packet_dict = packet.model_dump()
+def predict(packet: PubsubRequest): 
+# def predict(packet: KlueBertReviewRequest):  # local test 용
+    config = app.state.config                 
+    packet_dict = packet.message.decoded_data # data만 뽑아서 decode하고 dict로 변환        
+    if isinstance(packet_dict, list):
+        print(f"list case: {packet_dict}")
+    elif isinstance(packet_dict, dict):
+        print(f"dict case: packet_dict: {packet_dict.keys()}")
+    else:
+        print(f"unknown case: {packet_dict}")        
+    
+    # packet_dict = packet.model_dump() # local test 용
     # review_data = packet_dict['reviews']
     inference_result = inference(config, packet_dict['reviews']) # content_list
     
     for review, result_obj in zip(packet_dict['reviews'], inference_result):
         review['our_topics'] = result_obj['our_topics']
+        
     # [review.__setitem__('our_topics', our_topics) for review, our_topics in zip(data, inference_result)]            
-    res = requests.post(config.post_server, json=packet_dict, timeout=10)        
-    if res.status_code == 200:
-        try:
-            return res.json()
-        except requests.exceptions.JSONDecodeError:     # application/json이 아닌 경우
-            return {
-            "status": "SUCCESS" if "[SUCCESS]" in res.text else "UNKNOWN",
-            "message": res.text
-        }
-    else:
-        raise HTTPException(status_code=res.status_code, detail=res.text)
-        # return {"error": f"HTTP {res.status_code}", "response_text": res.text}
+    try:
+        res = requests.post(config.post_server, json=packet_dict, timeout=10)  # 서버 터지네...
+        if res.status_code == 200:
+            try:
+                return res.json()
+            except requests.exceptions.JSONDecodeError:     # application/json이 아닌 경우
+                return {
+                "status": "SUCCESS" if "[SUCCESS]" in res.text else "UNKNOWN",
+                "message": res.text
+            }
+        else:
+            raise HTTPException(status_code=res.status_code, detail=res.text)
+            # return {"error": f"HTTP {res.status_code}", "response_text": res.text}
+    except requests.exceptions.RequestException as e:
+        log.error(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error: {e}")
+
+
+@router.get("/health")
+def health():    
+    return {"message": "klue-bert-review-tagging"}
+
 
 def create_app(config: argparse.Namespace):
     @asynccontextmanager
@@ -169,7 +192,7 @@ if __name__ == "__main__":
     out_model_path = "pytorch_model.bin" if not os.environ.get("OUT_MODEL_PATH") else os.environ.get("OUT_MODEL_PATH")
     
     if not os.environ.get("POST_SERVER"):
-        post_server = "http://..."
+        post_server = "http://localhost:5000/api/review"
         # raise ValueError("POST_SERVER is required.")                
     else:
         post_server = os.environ.get("POST_SERVER")

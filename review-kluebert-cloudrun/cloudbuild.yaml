@@ -1,0 +1,177 @@
+steps:
+  # 리포지토리 존재 여부 확인 및 생성
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if ! gcloud artifacts repositories describe ${_REPOSITORY} --location=${_REGION} 2>/dev/null; then
+          echo "Repository ${_REPOSITORY} does not exist. Creating..."
+          gcloud artifacts repositories create ${_REPOSITORY} \
+            --repository-format=docker \
+            --location=${_REGION} \
+            --description="Docker repository"
+        else
+          echo "Repository ${_REPOSITORY} already exists."
+        fi
+
+  # 이미지 존재 여부 확인
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if gcloud artifacts docker images describe ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG} --quiet; then
+          echo "Image already exists in Artifact Registry."
+          echo "true" > /workspace/image_exists.txt
+        else
+          echo "Image does not exist in Artifact Registry."
+          echo "false" > /workspace/image_exists.txt
+        fi
+
+  # 도커 이미지 빌드 (이미지가 존재하지 않는 경우에만 실행)
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$(cat /workspace/image_exists.txt)" = "false" ] || [ "${_OVERWRITE_IMAGE}" = "true" ]; then
+          docker build -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG} \
+            --no-cache \
+            -f ./scripts_review/deploy/Dockerfile .
+        else
+          echo "Skipping image build as it already exists."
+        fi
+
+  # Artifact Registry로 이미지 푸시 (이미지가 존재하지 않는 경우에만 실행)
+  - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ "$(cat /workspace/image_exists.txt)" = "false" ] || [ "${_OVERWRITE_IMAGE}" = "true" ]; then
+          docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG}
+        else
+          echo "Skipping image push as it already exists."
+        fi
+
+  # Cloud Run에 배포
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'run',
+      'deploy',
+      '${_SERVICE_NAME}',
+      '--image',
+      '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG}',
+      '--region',
+      '${_REGION}',
+      '--platform',
+      'managed',
+      '--min-instances',
+      '${_MIN_INSTANCES}',
+      '--max-instances',
+      '${_MAX_INSTANCES}',
+      '--concurrency',
+      '${_CONCURRENCY}',
+      '--cpu',
+      '${_CPU}',
+      '--memory',
+      '${_MEMORY}',
+      '--timeout',
+      '${_TIMEOUT}',
+      '--set-env-vars',
+      'EVAL_BATCH_SIZE=${_EVAL_BATCH_SIZE},INIT_MODEL_PATH=${_INIT_MODEL_PATH},MAX_LENGTH=${_MAX_LENGTH},NEED_BIRNN=${_NEED_BIRNN},SENTIMENT_DROP_RATIO=${_SENTIMENT_DROP_RATIO},ASPECT_DROP_RATIO=${_ASPECT_DROP_RATIO},SENTIMENT_IN_FEATURE=${_SENTIMENT_IN_FEATURE},ASPECT_IN_FEATURE=${_ASPECT_IN_FEATURE},BASE_PATH=${_BASE_PATH},OUT_MODEL_PATH=${_OUT_MODEL_PATH},LABEL_INFO_FILE=${_LABEL_INFO_FILE},POST_SERVER=${_POST_SERVER}'
+      ]
+
+  # Cloud Function에서 사용할 Pub/Sub 토픽 생성 (이미 존재하는 경우 무시)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args: # 어차피 서버리스여서 오토 스케일링이 되기에 message-retention-duration은 10분으로 설정
+    - '-c'
+    - | # 줄바꿈을 위한 .yaml 파일 문법: |
+      gcloud pubsub topics create ${_PUBSUB_TOPIC} \
+      --message-retention-duration=10m || echo "Topic already exists"
+  
+  # Cloud run에서 사용하는 서비스 URL 확인
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        gcloud run services describe ${_SERVICE_NAME} --region=${_REGION} --format="value(status.url)" > /workspace/service_url.txt
+
+  # build 내에서 iam 권한 부여는 위험할 수 있음. 권한 부여는 수동으로 진행하는 것이 좋음.
+  # # 서비스 계정에 프로젝트에서 cloud run에 대한 관리자 권한 추가.
+  # - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  #   entrypoint: 'bash'
+  #   args:
+  #   - '-c'
+  #   - |
+  #     gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  #       --member=serviceAccount:${_SERVICE_ACCOUNT} \
+  #       --role=roles/run.admin
+
+  # # 서비스 계정에 서비스 호출 권한 추가.
+  # - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  #   entrypoint: 'bash'
+  #   args:
+  #   - '-c'
+  #   - |
+  #     gcloud run services add-iam-policy-binding ${_SERVICE_NAME} \
+  #       --region=${_REGION} \
+  #       --member=serviceAccount:${_SERVICE_ACCOUNT} \
+  #       --role=roles/run.invoke 
+
+   # Pub/Sub 구독 생성
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args: # ack-deadline: subscriber가 메시지를 처리하는데에 걸리는 최대 시간을 설정. 이걸 초과하면 다시 메시지를 publish함.
+    # 내 경우에는 image deploy 시간 약 60초, inference 준비시간 약 30초 inference 시간 약 10초, 총 100초가 걸리기에 150초로 설정.
+    - '-c'
+    - |
+      gcloud pubsub subscriptions create ${_SUBSCRIPTION_NAME} \
+      --topic ${_PUBSUB_TOPIC} \
+      --ack-deadline=150 \
+      --push-endpoint="$(cat /workspace/service_url.txt)/predict" \
+      --push-auth-service-account=${_SERVICE_ACCOUNT} \
+      || echo "Subscription already exists" 
+
+
+substitutions:
+  _REGION: 'asia-northeast3'
+  _REPOSITORY: 'gcr-review-tagging'
+  _IMAGE_NAME: 'kluebert-review'
+  _TAG: 'v1'
+  _SERVICE_NAME: 'gcr-review-kluebert'
+  _TIMEOUT: '10m'
+  _MIN_INSTANCES: '0'
+  _MAX_INSTANCES: '100'
+  _CONCURRENCY: '1'
+  _CPU: '2'
+  _MEMORY: '4Gi'
+  _EVAL_BATCH_SIZE: '1'
+  _INIT_MODEL_PATH: 'klue/bert-base'
+  _MAX_LENGTH: '512'
+  _NEED_BIRNN: '0'
+  _SENTIMENT_DROP_RATIO: '0.3'
+  _ASPECT_DROP_RATIO: '0.3'
+  _SENTIMENT_IN_FEATURE: '768'
+  _ASPECT_IN_FEATURE: '768'
+  _BASE_PATH: 'review_tagging'
+  _OUT_MODEL_PATH: 'meta.bin'
+  _LABEL_INFO_FILE: 'pytorch_model.bin'
+  _PUBSUB_TOPIC: 'gcf-review-kluebert-preprocessed'
+  _POST_SERVER:
+  _SERVICE_ACCOUNT:   
+  _OVERWRITE_IMAGE: 'false'
+  _SUBSCRIPTION_NAME: 'gcr-review-kluebert-subscription'  
+  
+
+images:
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG}' 
+
+artifacts:
+  objects:
+    location: 'gs://kluebert-review-bucket/cloudbuild-artifacts'
+    paths: ['*']

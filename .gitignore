@@ -1,0 +1,6 @@
+*.pyc
+settings.py
+*.zip
+*.bin
+*.log
+*.sh

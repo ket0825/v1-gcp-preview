@@ -2,7 +2,7 @@
 Preview: 소비자를 위한 OCR과 리뷰 분석서비스의 GCP 배포를 위한 소스코드 및 배포 코드입니다.
 ## 전체 서비스 아키텍처
 
-### 서비스에 사용되는 데이터 파이프라인
+### 서비스에 사용되는 데이터 파이프라인 (현재 개선 중...)
 ![preview_service_architecture (1)](https://github.com/user-attachments/assets/885269c7-2557-45b3-a87c-ecdda27b2cbe)
 
 ### 머신러닝 데이터 파이프라인
@@ -11,7 +11,7 @@ Preview: 소비자를 위한 OCR과 리뷰 분석서비스의 GCP 배포를 위�
 
 
 
-## 클라우드 아키텍처
+## 클라우드 아키텍처 (현재 개선 중...)
 
 ### Cloud Functions:
 - OCR과 리뷰를 위한 데이터 전처리를 담당합니다
@@ -41,7 +41,7 @@ Preview: 소비자를 위한 OCR과 리뷰 분석서비스의 GCP 배포를 위�
 # v1-gcp-preview
 Contains GCP and deploy codes for Preview: Product Review and OCR analyzer for customer.
 
-## Whole service architecture
+## Whole service architecture (Now improving...)
 
 ### Data pipeline
 ![preview_service_architecture (1)](https://github.com/user-attachments/assets/885269c7-2557-45b3-a87c-ecdda27b2cbe)
@@ -52,7 +52,7 @@ Contains GCP and deploy codes for Preview: Product Review and OCR analyzer for c
 
 
 
-## Cloud Architecture
+## Cloud Architecture (Now improving...)
 
 ### Cloud Functions:
 - Get data with crawler (Preview - https://github.com/ket0825/preview)

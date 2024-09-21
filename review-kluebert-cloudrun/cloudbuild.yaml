@@ -128,6 +128,8 @@ steps:
     entrypoint: 'bash'
     args: # ack-deadline: subscriber가 메시지를 처리하는데에 걸리는 최대 시간을 설정. 이걸 초과하면 다시 메시지를 publish함.
     # 내 경우에는 image deploy 시간 약 60초, inference 준비시간 약 30초 inference 시간 약 10초, 총 100초가 걸리기에 150초로 설정.
+    
+    # Enable payload unwrapping 이 기능 옵션에서 살려보자 나중에.
     - '-c'
     - |
       gcloud pubsub subscriptions create ${_SUBSCRIPTION_NAME} \

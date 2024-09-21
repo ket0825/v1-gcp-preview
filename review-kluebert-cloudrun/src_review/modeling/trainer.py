@@ -321,6 +321,8 @@ def eval_fn(data_loader, model, enc_sentiment, enc_aspect, enc_aspect2, enc_sent
 #     return ids_input_names, sentiment_pred_names, aspect_pred_names, aspect2_pred_names, sentiment_score_pred_names, aspect_score_pred_names
 
 
+
+
 def parsing_data(tokenizer, text, words_in_sent): # text는 리뷰 하나임
     ids = []
     words_list = [] # 단어 단위로 묶어서
@@ -954,6 +956,7 @@ def inference_fn(config, data:list, tokenizer, model, enc_sentiment, enc_aspect,
         # ids_list는 단어 단위로 묶은 것-->ids_list의 len이 단어 개수임 / words_in_sent는 리뷰 하나에 대한 문장이 가지는 단어의 개수(slicing)
         words_list_for_file.append(words_list)
         words_in_sent_for_file.append(words_in_sent)
+        data = parsing_batch(data, device)
         predict_sentiment, predict_aspect, predict_aspect2, predict_sentiment_score, predict_aspect_score = model(**data)
 
         sentiment_pred = np.array(predict_sentiment).reshape(-1)

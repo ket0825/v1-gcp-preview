@@ -30,41 +30,41 @@ def load_bert_model(config: argparse.Namespace):
     global log
     log.info(f"Loading BERT model. Config: {config.__dict__}")
     
-    # bucket_name = config.base_path
-    # model_file = config.out_model_path
-    # metadata_file = config.label_info_file
-    # storage_client = storage.Client()
+    bucket_name = config.base_path
+    model_file = config.out_model_path
+    metadata_file = config.label_info_file
+    storage_client = storage.Client()
     
-    # _, project_id = default()
-    # print(f"Current Project ID: {project_id}")
+    _, project_id = default()
+    print(f"Current Project ID: {project_id}")
     
-    # # 버킷 목록 조회
-    # buckets = storage_client.list_buckets()
+    # 버킷 목록 조회
+    buckets = storage_client.list_buckets()
 
-    # print("Buckets:")
-    # for bucket in buckets:
-    #     print(f" - {bucket.name}")
+    print("Buckets:")
+    for bucket in buckets:
+        print(f" - {bucket.name}")
     
-    #  # 특정 버킷의 객체(파일) 목록 조회    
-    # bucket = storage_client.get_bucket(bucket_name)
-    # blobs = bucket.list_blobs()
+     # 특정 버킷의 객체(파일) 목록 조회    
+    bucket = storage_client.get_bucket(bucket_name)
+    blobs = bucket.list_blobs()
     
-    # print(f"\nObjects in bucket '{bucket_name}':")
-    # for blob in blobs:
-    #     print(f" - {blob.name}")
+    print(f"\nObjects in bucket '{bucket_name}':")
+    for blob in blobs:
+        print(f" - {blob.name}")
     
-    # bucket = storage_client.bucket(bucket_name)
-    # model_blob = bucket.blob(model_file)
-    # metadata_blob = bucket.blob(metadata_file)        
+    bucket = storage_client.bucket(bucket_name)
+    model_blob = bucket.blob(model_file)
+    metadata_blob = bucket.blob(metadata_file)        
     
     local_model_path = './tmp/pytorch_model.bin'
     metadata_path = './tmp/meta.bin'    
     
-    # print(f"Downloading model to {local_model_path}")     
-    # model_blob.download_to_filename(local_model_path)        
-    # log.info(f"Model downloaded to {local_model_path}")
-    # metadata_blob.download_to_filename(metadata_path)
-    # log.info(f"Metadata (label) downloaded to {metadata_path}")    
+    print(f"Downloading model to {local_model_path}")     
+    model_blob.download_to_filename(local_model_path)        
+    log.info(f"Model downloaded to {local_model_path}")
+    metadata_blob.download_to_filename(metadata_path)
+    log.info(f"Metadata (label) downloaded to {metadata_path}")    
     
     try:        
         log.info("Loading metadata...")
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     base_path = "./tmp/model" if not os.environ.get("BASE_PATH") else os.environ.get("BASE_PATH")
     label_info_file = "meta.bin" if not os.environ.get("LABEL_INFO_FILE") else os.environ.get("LABEL_INFO_FILE")
     out_model_path = "pytorch_model.bin" if not os.environ.get("OUT_MODEL_PATH") else os.environ.get("OUT_MODEL_PATH")
-    
+    base_path = "review_tagging"
     if not os.environ.get("POST_SERVER"):
         post_server = "http://localhost:5000/api/review"
         # raise ValueError("POST_SERVER is required.")                
@@ -218,5 +218,5 @@ if __name__ == "__main__":
     config = parser.parse_args()
     
     app = create_app(config)
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 8081))
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,0 +1,6 @@
+*.log
+ckpt_review/
+resources_review/
+src_review/wisekmapy/
+# tmp/
+*.pyc

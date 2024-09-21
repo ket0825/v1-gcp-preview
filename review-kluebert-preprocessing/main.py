@@ -1,28 +1,21 @@
 import json
 import os
+import urllib.request
 import functions_framework
 from google.cloud import pubsub_v1
 from concurrent import futures
 from typing import Callable
 from flask import jsonify
+import urllib
 
-from utils import split_content_into_sentences
+import base64
 
-publisher = pubsub_v1.PublisherClient()
+from utils import preprocess_fn_deploy
+
+
 project_id = os.environ["GCP_PROJECT"]
-publish_futures = []
+OCR_LB_ENDPOINT = os.environ["OCR_LB_ENDPOINT"]
 
-def get_callback(
-    publish_future: pubsub_v1.publisher.futures.Future, data: str
-) -> Callable[[pubsub_v1.publisher.futures.Future], None]:
-    def callback(publish_future: pubsub_v1.publisher.futures.Future) -> None:
-        try:
-            # Wait 60 seconds for the publish call to succeed.
-            publish_future.result(timeout=60)
-        except futures.TimeoutError:
-            print(f"Publishing {data} timed out.")
-                
-    return callback
 
 @functions_framework.http
 def review_kluebert_preprocessing(request):
@@ -40,16 +33,11 @@ def review_kluebert_preprocessing(request):
         or "match_nv_mid" not in request_json 
         or "reviews" not in request_json
         ):
-        raise ValueError(f"JSON is invalid. Keys: {request_json.keys()}")       
-
-    for review in request_json['reviews']:
-        review['content'] = split_content_into_sentences(review['content'])    
-    
-    topic_name = os.environ["TOPIC_NAME"]
-    print(f"Publishing message to {topic_name}")    
-    topic_path = publisher.topic_path(project_id, topic_name)
-    print(f"Publishing path: {topic_path}")
-    
+        raise ValueError(f"JSON is invalid. Keys: {request_json.keys()}")           
+        
+    request_json['reviews'] = preprocess_fn_deploy(request_json['reviews'])
+        
+    response_list = []
     max_review_length = int(os.environ.get("MAX_REVIEW_LENGTH"))
     review_length = len(request_json['reviews'])    
     review_count = 0
@@ -61,14 +49,25 @@ def review_kluebert_preprocessing(request):
             "reviews": request_json['reviews'][review_count:review_count+max_review_length]
         }                
         print(f"review length: {len(request_json_chunk['reviews'])}")
-        message_data = json.dumps(request_json_chunk, ensure_ascii=False).encode("utf-8-sig")            
-        publish_future = publisher.publish(topic_path, data=message_data)            
-        publish_future.add_done_callback(get_callback(publish_future, message_data))
-        publish_futures.append(publish_future)
-        review_count += max_review_length
+        message_data = json.dumps(request_json_chunk, ensure_ascii=False).encode("utf-8-sig")
         
-    futures.wait(publish_futures, return_when=futures.ALL_COMPLETED)            
-    print("[INFO] All messages published.")
+        req = urllib.request.Request(OCR_LB_ENDPOINT, data=message_data, method="POST")
+        req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req) as response:            
+                res_data = response.read().decode('utf-8')
+                print(f"Response: {res_data}")
+                response_list.append(res_data)
+        except Exception as e:
+            print(f"Error in OCR Cloud Functions: {e}")                            
+            response_list.append(f"Error in OCR Cloud Functions: {e}")
+        
+        review_count += max_review_length                
     
-    return jsonify({"message": f"Review length: {review_length}", "status":200}), 200
+    return jsonify(
+        {
+            "message": f"Review length: {review_length}", 
+            "response": "\n".join(response_list),
+            "status":200
+        }), 200
     

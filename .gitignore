@@ -4,3 +4,4 @@ settings.py
 *.bin
 *.log
 *.sh
+docs.md

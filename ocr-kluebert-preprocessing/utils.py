@@ -67,4 +67,4 @@ def preprocess_seller_spec(seller_spec:list):
     for img_attr in seller_spec:
         img_attr['img_str'], img_attr['img_str_preprocessed'], img_attr['img_sent_list_preprocessed'] \
             = preprocess_img_spec(img_attr['img_str'])    
-    return img_attr
+    return seller_spec

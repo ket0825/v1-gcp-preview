@@ -150,12 +150,9 @@ steps:
   #     || echo "Subscription already exists" 
 
 
-
-
-
 substitutions:
   _REGION: 'asia-northeast3'
-  _REPOSITORY: 'it-ocr-tagging'
+  _REPOSITORY: 'ocr-kluebert-batch'
   _IMAGE_NAME: 'kluebert-ocr'
   _TAG: 'v1'
   # _SERVICE_NAME: 'it-ocr-kluebert'
@@ -182,11 +179,10 @@ substitutions:
   _OVERWRITE_IMAGE: 'false'
   # _SUBSCRIPTION_NAME: 'gcr-review-kluebert-subscription'  
   
-
 images:
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${_TAG}' 
 
 artifacts:
   objects:
-    location: 'gs://kluebert-ocr-bucket/cloudbuild-artifacts'
+    location: 'gs://ocr-batch/cloudbuild-artifacts'
     paths: ['*']

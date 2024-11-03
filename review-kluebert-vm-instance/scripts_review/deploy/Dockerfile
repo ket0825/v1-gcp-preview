@@ -6,9 +6,11 @@ WORKDIR /app
 
 COPY . .
 
+# Install dependencies and set permissions
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt --no-cache-dir
+    pip install --no-cache-dir -r requirements.txt && \
+    chown -R 777 /app
+    
+WORKDIR /app/src_review
 
-EXPOSE 8080
-
-ENTRYPOINT [ "python", "./src_review/model_server.py" ]
+CMD ["uvicorn", "model_server:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1"]

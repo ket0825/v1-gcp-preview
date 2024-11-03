@@ -81,7 +81,7 @@ write_files:
     User=myuser
     Type=simple
     ExecStart=/bin/bash -c 'docker run --rm \
-      -p 8080:8080 \
+      -p 8081:8081 \
       -u 2000 \
       --name gpu-app \
       --volume /var/lib/nvidia/lib64:/usr/local/nvidia/lib64 \
@@ -94,7 +94,7 @@ write_files:
       -e TRANSFORMERS_CACHE=/app/src_review \
       -e POST_SERVER="http://10.0.1.2:5000/api/review" \
       --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-      asia-northeast3-docker.pkg.dev/webserver-project-425817/it-review-tagging/kluebert-review:v1'
+      asia-northeast3-docker.pkg.dev/webserver-project-425817/it-review-tagging/kluebert-review:v1'      
     ExecStop=/usr/bin/docker stop gpu-app
     Restart=always
     RestartSec=10

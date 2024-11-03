@@ -23,6 +23,7 @@ class InputReviews(BaseModel):
 class KlueBertReviewRequest(BaseModel):
     type:str
     category:str
+    prid: str
     match_nv_mid:str
     reviews:List[InputReviews]    
     

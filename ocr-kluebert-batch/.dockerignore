@@ -1,4 +1,4 @@
-*.log
+`*.log
 ckpt_review/
 resources_review/
 # tmp/

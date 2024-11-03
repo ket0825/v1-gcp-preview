@@ -1,5 +1,5 @@
 import logging
-
+import os
 
 class Log:
     def __init__(self):
@@ -22,7 +22,8 @@ class Log:
         return self.log
 
     def set_file_handler(self,file_path, filename, mode='a'):
-        file_name = file_path + filename
+        os.makedirs(file_path, exist_ok=True)
+        file_name = file_path + filename        
         file_handler = logging.FileHandler(file_name, mode=mode)
         file_handler.setFormatter(self.formatter)
         self.log.addHandler(file_handler)

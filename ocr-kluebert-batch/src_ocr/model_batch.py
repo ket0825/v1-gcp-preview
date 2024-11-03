@@ -310,17 +310,11 @@ def main():
             iter_count = 0
             while True:
                 # conn.ping(reconnect=True)
-                batch = cursor.fetchmany(batch_size)
-                iter_count += 1 
-                
+                batch = cursor.fetchmany(batch_size)                                
                 if not batch:
-                    break                                                
+                    break                                                                
                 
-                if not iter_count > 4: # To Find error
-                    continue
-                
-                for row in batch:        
-                        
+                for row in batch:                                
                     row['seller_spec'] = sanatize_text(row['seller_spec'], is_seller_spec=True)
                     row['naver_spec'] = sanatize_text(row['naver_spec'])                    
                     row['detail_image_urls'] = sanatize_text(row['detail_image_urls'])

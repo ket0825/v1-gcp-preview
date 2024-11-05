@@ -114,7 +114,7 @@ def clone_template_with_new_network(
     # 작업 완료 대기
     wait_for_operation(operation, project_id)
     print(f"Successfully created new template: {new_template}")
-    return new_template
+    return new_template            
     
 
 def delete_instance_template(project_id: str, template_name: str) -> compute_v1.Operation:
@@ -273,6 +273,6 @@ def create_gpu_job(project_id, zone, new_template):
 if __name__ == "__main__":
     for zone in ZONES.split(","):
         region = "-".join(zone.split("-")[:2])
-        new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-ocr-template", region)
+        new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-review-template", region)
         create_gpu_job(PROJECT_ID, zone, new_template)
         # delete_template(PROJECT_ID, new_template)

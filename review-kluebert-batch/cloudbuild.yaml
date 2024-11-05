@@ -151,12 +151,9 @@ steps:
   #     || echo "Subscription already exists" 
 
 
-
-
-
 substitutions:
   _REGION: 'asia-northeast3'
-  _REPOSITORY: 'it-review-tagging'
+  _REPOSITORY: 'review-kluebert-batch'
   _IMAGE_NAME: 'kluebert-review'
   _TAG: 'v1'
   # _SERVICE_NAME: 'it-ocr-kluebert'
@@ -189,5 +186,5 @@ images:
 
 artifacts:
   objects:
-    location: 'gs://kluebert-review-bucket/cloudbuild-artifacts'
+    location: 'gs://review-batch/cloudbuild-artifacts'
     paths: ['*']

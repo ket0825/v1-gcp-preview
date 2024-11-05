@@ -94,7 +94,7 @@ write_files:
       -e TRANSFORMERS_CACHE=/app/src_ocr \
       -e POST_SERVER="http://10.0.1.2:5000/api/product/detail/one" \
       --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-      asia-northeast3-docker.pkg.dev/webserver-project-425817/ocr-kluebert/kluebert-ocr:v1'
+      asia-northeast3-docker.pkg.dev/webserver-project-425817/ocr-kluebert-batch/kluebert-ocr:v1'
     ExecStop=/usr/bin/docker stop gpu-app
     Restart=always
     RestartSec=10

@@ -7,4 +7,6 @@ settings.py
 docs.md
 **.vscode/
 
+# For obsolete environment variables
 **/.env
+**/*/cloud-init.yaml

@@ -12,7 +12,7 @@ class EnvConfig(BaseSettings):
     aspect_drop_ratio: float = os.getenv("ASPECT_DROP_RATIO", 0.3)        
     sentiment_in_feature: int = os.getenv("SENTIMENT_IN_FEATURE", 768)
     aspect_in_feature: int = os.getenv("ASPECT_IN_FEATURE", 768)        
-    base_path: str = os.getenv("BASE_PATH", "review_tagging")        
+    base_path: str = os.getenv("BASE_PATH", "review-kluebert-v1")        
     label_info_file: str = os.getenv("LABEL_INFO_FILE", "meta.bin")
     out_model_path: str = os.getenv("OUT_MODEL_PATH", "pytorch_model.bin")    
     

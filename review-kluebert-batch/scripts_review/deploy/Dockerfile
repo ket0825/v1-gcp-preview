@@ -11,7 +11,7 @@ RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     chown -R 777 /app
     
-WORKDIR /app/src_ocr
+WORKDIR /app/src_review
 
 CMD ["python", "model_batch.py"]
 

@@ -92,9 +92,8 @@ write_files:
       -e NVIDIA_VISIBLE_DEVICES=all \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
       -e TRANSFORMERS_CACHE=/app/src_review \
-      -e POST_SERVER="http://35.216.20.153:3307/api/review" \
+      -e POST_SERVER="http://10.0.1.2:5000/api/review" \
       --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-      --log-driver=gcplogs \
       asia-northeast3-docker.pkg.dev/webserver-project-425817/review-kluebert-batch/kluebert-review:v1'      
     ExecStop=/usr/bin/docker stop gpu-app
     Restart=always

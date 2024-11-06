@@ -1,6 +1,16 @@
-from google.cloud import batch_v1
-from dotenv import load_dotenv
+# MARK: 반드시 디렉토리 변경 후에 코드 실행 (.env).
+# MARK: Whole script should work in thread.
 import os
+from copy import deepcopy
+import time
+from typing import List
+
+from dotenv import load_dotenv
+
+from google.cloud import batch_v1
+from google.api_core import retry
+from google.api_core import timeout as timeout_
+from google.cloud import compute_v1
 
 load_dotenv()
 REPOSITORY = os.environ['REPOSITORY']
@@ -10,8 +20,17 @@ VPC_NAME = os.environ['VPC_NAME']
 PROJECT_ID = os.environ['PROJECT_ID']
 ZONES = os.environ['ZONES']
 
-from google.cloud import compute_v1
-from copy import deepcopy
+# 커스텀 재시도 정책 정의 (재시도 없음)
+no_retry = retry.Retry(
+    predicate=retry.if_exception_type(),  # 빈 predicate = 재시도 안 함
+    initial=1.0,
+    maximum=5.0,
+    multiplier=1.5,
+    deadline=60.0  # 전체 시도 시간 제한 (초)
+)
+
+# timeout 설정
+timeout = timeout_.ConstantTimeout(60.0)  # 30초
 
 def get_instance_template(project_id: str, template_name: str) -> compute_v1.InstanceTemplate:
     """기존 instance template을 가져옵니다."""
@@ -66,8 +85,7 @@ def create_modified_template(
     new_template.description = f"Cloned from {source_template_name} with modified subnet and region"
     # 네트워크 인터페이스 region 변경        
     new_template.region = new_region        
-        
-    
+            
     # 네트워크 인터페이스 region 및 subnet 변경: 
     if new_template.properties.network_interfaces:                
         new_template.properties.network_interfaces[0].subnetwork = new_subnet
@@ -80,6 +98,11 @@ def create_modified_template(
                     disk.source.split('/regions/')[1].split('/')[0],
                     new_region
                 )
+    
+    # MARK: SPOT 인스턴스 사용 안하는 경우.                
+    new_template.properties.scheduling.preemptible = False
+    new_template.properties.scheduling.instance_termination_action = "UNDEFINED_INSTANCE_TERMINATION_ACTION"
+    new_template.properties.scheduling.provisioning_model = 'STANDARD'
     
     # 새로운 템플릿 생성 요청
     operation = client.insert(
@@ -131,9 +154,9 @@ def delete_template(project_id, template_name):
     except Exception as e:
         print(f"Error deleting template: {str(e)}")
 
-def create_gpu_job(project_id, zone, new_template):
+def create_gpu_job(project_id, zones:List[str], new_template):
     client = batch_v1.BatchServiceClient()        
-    region = "-".join(zone.split("-")[:2])
+    region = "-".join(zones[0].split("-")[:2])
     
     env_vars = {
         "DB_HOST": os.environ["DB_HOST"],
@@ -145,6 +168,7 @@ def create_gpu_job(project_id, zone, new_template):
         "TOPIC_TYPE": os.environ["TOPIC_TYPE"],
         "CATEGORIES": os.environ["CATEGORIES"],
     }    
+    print("env_vars:", env_vars.items())
       
     images_uri = f'asia-northeast3-docker.pkg.dev/{project_id}/{REPOSITORY}/{IMAGE_NAME}:{TAG}'    
 
@@ -172,8 +196,8 @@ def create_gpu_job(project_id, zone, new_template):
     # accelerators.count = 1
     # policy.accelerators = [accelerators]    
     
-    location = batch_v1.AllocationPolicy.LocationPolicy()
-    location.allowed_locations = [zone]
+    location = batch_v1.AllocationPolicy.LocationPolicy()    
+    location.allowed_locations = [f"zones/{zone}" for zone in zones]
     
     allocation_policy.instances = [instances]
     allocation_policy.location = location
@@ -234,9 +258,8 @@ def create_gpu_job(project_id, zone, new_template):
                 }
             ],
             "location": {
-                "allowed_locations": [
-                    f"zones/{zone}"
-                ]
+                "allowed_locations": [f"zones/{zone}" for zone in zones] # multi-zone
+                    # [f"zones/{zone}"]                    
             },
             "network": {
                 "network_interfaces": [
@@ -266,13 +289,82 @@ def create_gpu_job(project_id, zone, new_template):
     # response = client.create_job(request=create_request, metadata=metadata)    
     parent = f'projects/{project_id}/locations/{region}'
     
-    response = client.create_job(job=job, parent=parent)
+    response = client.create_job(
+        job=job, 
+        parent=parent,
+        retry=no_retry,    
+        timeout=timeout    
+        )
     print(f"Created job: {response.name}")
     return response
 
-if __name__ == "__main__":
+def check_resource_errors(status_events):
+    error_keywords = [
+        "CODE_GCE_ZONE_RESOURCE_POOL_EXHAUSTED",
+        "does not have enough resources available"
+    ]
+    
+    for event in status_events:
+        for keyword in error_keywords:
+            if keyword in event.description:
+                return True, event.description
+    return False, None
+
+def wait_until_job(job_name, max_wait_seconds=1200):
+    client = batch_v1.BatchServiceClient()        
+    enum_dict = {v: k for k, v in batch_v1.JobStatus.State.__dict__.items() if not k.startswith('_')}
+    
+    start_time = time.time()
+    try:
+        while time.time() - start_time < max_wait_seconds:
+            response = client.get_job(name=job_name, retry=no_retry, timeout=timeout)            
+            state = response.status.state
+            
+             # 리소스 에러 체크
+            has_error, error_msg = check_resource_errors(response.status.status_events)
+            if has_error:
+                print(f"Resource error detected: {error_msg}")
+                print("Terminating job...")
+                client.delete_job(name=job_name)
+                return False            
+            
+            if state == batch_v1.JobStatus.State.FAILED:
+                return False
+            elif state == batch_v1.JobStatus.State.DELETION_IN_PROGRESS:
+                return False
+            elif state == batch_v1.JobStatus.State.RUNNING:
+                return True
+            else:                                
+                print(f"Job status: {enum_dict[state]}. Waiting...")
+                time.sleep(10)
+        
+        print("Job did not complete within the time limit.")
+        return False
+            
+    except Exception as e:
+        print(f"Error getting job status: {str(e)}")
+        return False
+
+def deploy_review_jobs():
+    region_to_zones = {}
     for zone in ZONES.split(","):
         region = "-".join(zone.split("-")[:2])
+        if region not in region_to_zones:
+            region_to_zones[region] = []
+        region_to_zones[region].append(zone)
+    
+    for region, zones in region_to_zones.items():
+        print(f"Deploying to region: {region}")
         new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-review-template", region)
-        create_gpu_job(PROJECT_ID, zone, new_template)
-        # delete_template(PROJECT_ID, new_template)
+        job = create_gpu_job(PROJECT_ID, zones, new_template)
+        if wait_until_job(job.name):
+            print(f"Job completed successfully: {job.name}")
+            break
+        else:
+            print(f"Job failed. Move to the next region from {region}.")
+        # clean up
+        delete_template(PROJECT_ID, new_template)
+    
+
+if __name__ == "__main__":
+    deploy_review_jobs()

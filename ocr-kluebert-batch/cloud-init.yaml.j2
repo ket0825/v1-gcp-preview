@@ -1,4 +1,5 @@
 #cloud-config
+## template: jinja
 
 users:
 - name: myuser
@@ -21,6 +22,7 @@ write_files:
     ExecStart=cos-extensions install gpu    
     StandardOutput=journal+console
     StandardError=journal+console
+    
     
 
     [Install]
@@ -81,7 +83,7 @@ write_files:
     User=myuser
     Type=simple
     ExecStart=/bin/bash -c 'docker run --rm \
-      -p 8081:8081 \
+      -p 8080:8080 \
       -u 2000 \
       --name gpu-app \
       --volume /var/lib/nvidia/lib64:/usr/local/nvidia/lib64 \
@@ -91,10 +93,12 @@ write_files:
       --device /dev/nvidiactl:/dev/nvidiactl \
       -e NVIDIA_VISIBLE_DEVICES=all \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      -e TRANSFORMERS_CACHE=/app/src_review \
-      -e POST_SERVER="http://10.0.1.2:5000/api/review" \
-      --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-      asia-northeast3-docker.pkg.dev/webserver-project-425817/it-review-tagging/kluebert-review:v1'      
+      -e TRANSFORMERS_CACHE=/app/src_ocr \
+      -e LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
+      {% for key, value in env_vars.items()  %}
+      -e {{ key }}="{{ value }}" \            
+      {% endfor %}
+      {{ IMAGE_URI}}
     ExecStop=/usr/bin/docker stop gpu-app
     Restart=always
     RestartSec=10

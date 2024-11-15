@@ -92,9 +92,9 @@ write_files:
       -e NVIDIA_VISIBLE_DEVICES=all \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
       -e TRANSFORMERS_CACHE=/app/src_review \
-      -e POST_SERVER="http://10.0.1.2:5000/api/review" \
+      -e POST_SERVER="http://10.0.1.47:5000/api/review" \
       --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-      asia-northeast3-docker.pkg.dev/webserver-project-425817/it-review-tagging/kluebert-review:v1'      
+      ${이미지경로}'      
     ExecStop=/usr/bin/docker stop gpu-app
     Restart=always
     RestartSec=10

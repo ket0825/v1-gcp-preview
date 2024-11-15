@@ -2,9 +2,6 @@ import json
 import os
 import urllib.request
 import functions_framework
-from google.cloud import pubsub_v1
-from concurrent import futures
-from typing import Callable
 from flask import jsonify
 import urllib
 
@@ -12,9 +9,8 @@ import base64
 
 from utils import preprocess_fn_deploy
 
-
 project_id = os.environ["GCP_PROJECT"]
-OCR_LB_ENDPOINT = os.environ["OCR_LB_ENDPOINT"]
+REVIEW_LB_ENDPOINT = os.environ["REVIEW_LB_ENDPOINT"]
 
 
 @functions_framework.http
@@ -51,7 +47,7 @@ def review_kluebert_preprocessing(request):
         print(f"review length: {len(request_json_chunk['reviews'])}")
         message_data = json.dumps(request_json_chunk, ensure_ascii=False).encode("utf-8-sig")
         
-        req = urllib.request.Request(OCR_LB_ENDPOINT, data=message_data, method="POST")
+        req = urllib.request.Request(REVIEW_LB_ENDPOINT, data=message_data, method="POST")
         req.add_header('Content-Type', 'application/json')
         try:
             with urllib.request.urlopen(req) as response:            

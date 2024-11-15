@@ -834,7 +834,7 @@ def inference_fn(config, seller_spec, tokenizer, model, enc_aspect, enc_aspect2,
 
         sentences = [text.split() for text in df["img_str_preprocessed"]]                
         
-        for i in tqdm(range(len(sentences))):
+        for i in tqdm(range(len(sentences)), disable=True):
             data, words_list, words_in_sent= parsing_data(tokenizer, sentences[i], words_in_each_sentence[i]) 
             # ids_list는 단어 단위로 묶은 것-->ids_list의 len이 단어 개수임 / words_in_sent는 리뷰 하나에 대한 문장이 가지는 단어의 개수(slicing)
             words_list_for_file.append(words_list)
@@ -844,7 +844,7 @@ def inference_fn(config, seller_spec, tokenizer, model, enc_aspect, enc_aspect2,
             
             aspect_pred = np.array(predict_aspect).reshape(-1)
             aspect2_pred = np.array(predict_aspect2).reshape(-1)
-            ids_input = data['ids'].numpy().reshape(-1)
+            ids_input = data['ids'].cpu().numpy().reshape(-1)
 
         # remove padding indices
             indices_to_remove = np.where((ids_input == 2) | (ids_input == 3) | (ids_input == 0))

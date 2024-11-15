@@ -1,0 +1,114 @@
+#cloud-config
+## template: jinja
+
+users:
+- name: myuser
+  uid: 2000
+
+write_files:
+# GPU 드라이버 설치
+- path: /etc/systemd/system/install-gpu.service
+  permissions: 0644
+  owner: root
+  content: |
+    [Unit]
+    Description=Install GPU drivers
+    Wants=gcr-online.target docker.socket
+    After=gcr-online.target docker.socket
+
+    [Service]
+    User=root
+    Type=oneshot
+    ExecStart=cos-extensions install gpu    
+    StandardOutput=journal+console
+    StandardError=journal+console
+    
+    
+
+    [Install]
+    WantedBy=multi-user.target
+    
+# GCR credential 설정으로 Artifact Registry에 접근 가능하도록 설정
+- path: /etc/systemd/system/docker-credential-gcr.service
+  permissions: 0644
+  owner: root
+  content: |
+    [Unit]
+    Description=Configure Docker to use GCR credentials
+    Wants=docker.service install-gpu.service
+    After=docker.service install-gpu.service
+
+    [Service]
+    User=myuser
+    Type=oneshot
+    ExecStart=/usr/bin/docker-credential-gcr configure-docker --registries asia-northeast3-docker.pkg.dev
+    StandardOutput=journal+console
+    StandardError=journal+console
+    Restart=on-failure
+    RestartSec=10s
+
+    [Install]
+    WantedBy=multi-user.target
+
+# myuser를 docker 그룹에 추가하여 docker 명령어 사용 가능하도록 설정
+- path: /etc/systemd/system/group-myuser-docker.service
+  permissions: 0644
+  owner: root
+  content: |
+    [Unit]
+    Description=Group myuser with docker
+    Wants=docker.service install-gpu.service docker-credential-gcr.service
+    After=docker.service install-gpu.service docker-credential-gcr.service
+
+    [Service]
+    User=root
+    Type=oneshot
+    ExecStart=usermod -aG docker myuser
+
+    [Install]
+    WantedBy=multi-user.target
+
+# Nvidia GPU 드라이버 마운트 및 GPU 애플리케이션 실행
+# docker run -d는 service로 실행할 수 없음!
+- path: /etc/systemd/system/gpu-app.service
+  permissions: 0644
+  owner: root
+  content: |
+    [Unit]
+    Description=Run a GPU application container
+    Requires=install-gpu.service docker-credential-gcr.service group-myuser-docker.service
+    After=install-gpu.service docker-credential-gcr.service group-myuser-docker.service
+
+    [Service]
+    User=myuser
+    Type=simple
+    ExecStart=/bin/bash -c 'docker run --rm \
+      -p 8080:8080 \
+      -u 2000 \
+      --name gpu-app \
+      --volume /var/lib/nvidia/lib64:/usr/local/nvidia/lib64 \
+      --volume /var/lib/nvidia/bin:/usr/local/nvidia/bin \
+      --device /dev/nvidia0:/dev/nvidia0 \
+      --device /dev/nvidia-uvm:/dev/nvidia-uvm \
+      --device /dev/nvidiactl:/dev/nvidiactl \
+      -e NVIDIA_VISIBLE_DEVICES=all \
+      -e NVIDIA_DRIVER_CAPABILITIES=all \
+      -e TRANSFORMERS_CACHE=/app/src_ocr \
+      -e LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
+      {% for key, value in env_vars.items()  %}
+      -e {{ key }}="{{ value }}" \            
+      {% endfor %}
+      {{ IMAGE_URI}}
+    ExecStop=/usr/bin/docker stop gpu-app
+    Restart=always
+    RestartSec=10
+
+    [Install]
+    WantedBy=multi-user.target
+
+runcmd:
+  - systemctl daemon-reload
+  - systemctl start install-gpu.service
+  - systemctl start docker-credential-gcr.service
+  - systemctl start group-myuser-docker.service
+  - systemctl start gpu-app.service

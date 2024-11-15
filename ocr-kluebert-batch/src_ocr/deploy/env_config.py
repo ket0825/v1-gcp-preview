@@ -20,17 +20,15 @@ class EnvConfig(BaseSettings):
     user: str = os.getenv("DB_USER")
     password: str = os.getenv("DB_PASSWORD")
     name: str = os.getenv("DB_NAME")
-    port: int = os.getenv("PORT")
+    port: int = os.getenv("DB_PORT")
     
     # Batch config
-    batch_size: int = os.getenv("BATCH_SIZE", 1)
+    batch_size: int = os.getenv("BATCH_SIZE", 16)
     topic_type: str = os.getenv("TOPIC_TYPE", "klue-bert-v1")
     
     # extra_battery,keyboard,monitor.
-    # IN 처리를 위해 '로 감싸줌.
-    categories: str = "'"+ \
-        "','".join(os.getenv("CATEGORIES", 'extra_battery').split(","))  \
-            + "'"
+    # IN 처리를 위해 ','로 메인 로직에서 감싸줌.
+    categories: str = os.getenv("CATEGORIES", 'extra_battery')
     
     
         

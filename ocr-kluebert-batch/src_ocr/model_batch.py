@@ -287,7 +287,11 @@ def main():
     batch_size = config.batch_size
     topic_type = config.topic_type
     categories = config.categories
-
+    # In Pydantic, string values enclosed in single quotes are treated as a single string.
+    categories = "'" \
+        + "','".join(categories.split(","))  \
+        + "'" 
+    
     try:
         with conn.cursor() as cursor, conn.cursor() as sub_cursor:
             sql = f"""

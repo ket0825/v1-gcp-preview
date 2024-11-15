@@ -312,7 +312,11 @@ def main():
         
         batch_size = config.batch_size
         topic_type = config.topic_type
-        categories = config.categories    
+        categories = config.categories            
+        # In Pydantic, string values enclosed in single quotes are treated as a single string.
+        categories = "'" \
+            + "','".join(categories.split(","))  \
+            + "'" 
         try:
             with conn_ss.cursor(cursor=pymysql.cursors.DictCursor) as ss_cursor, \
                 conn.cursor(cursor=pymysql.cursors.DictCursor) as sub_cursor:
@@ -385,3 +389,6 @@ def main():
 if __name__ == '__main__':    
     load_bert_model(config)    
     main()
+    
+    
+    

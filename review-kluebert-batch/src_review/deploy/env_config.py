@@ -21,12 +21,10 @@ class EnvConfig(BaseSettings):
     user: str = os.getenv("DB_USER", "root")
     name: str = os.getenv("DB_NAME", 'cosmos')
     password: str = os.getenv("DB_PASSWORD", '1234')
-    port: int = os.getenv("PORT", 3306)
+    port: int = os.getenv("DB_PORT", 3306)
     
     # Batch config
-    batch_size: int = os.getenv("BATCH_SIZE", 2)
+    batch_size: int = os.getenv("BATCH_SIZE", 16)
     topic_type: str = os.getenv("TOPIC_TYPE", 'klue-bert-v1')
-    categories: str = "'"+ \
-        "','".join(os.getenv("CATEGORIES", 'extra_battery').split(","))  \
-            + "'" 
+    categories: str = os.getenv("CATEGORIES", 'extra_battery')
     

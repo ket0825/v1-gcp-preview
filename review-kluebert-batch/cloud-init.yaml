@@ -93,7 +93,7 @@ write_files:
         -e NVIDIA_DRIVER_CAPABILITIES=all \
         -e TRANSFORMERS_CACHE=/app/src_review \
         --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64 \
-        
+        ${이미지경로}'
 runcmd:
   - systemctl daemon-reload
   - systemctl start install-gpu.service

@@ -134,15 +134,17 @@ def create_modified_template(
     
     # MARK: cloud-init 주입
     # metadata override
-    cloud_init = render_cloud_init_script("cloud-init.yaml.j2", env_vars)
+    # cloud_init = render_cloud_init_script("cloud-init.yaml.j2", env_vars)
     metadata = compute_v1.Metadata()
     
-    metadata.items = [        
-            compute_v1.Items(
-                key='user-data',
-                value=cloud_init    
-            ),                
-        ]
+    # batch-cos-stable-official-20241030-00-p00 
+    
+    # metadata.items = [        
+    #         compute_v1.Items(
+    #             key='user-data',
+    #             value=cloud_init    
+    #         ),                
+    #     ]
     
     new_template.properties.metadata = metadata
     
@@ -222,7 +224,8 @@ def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
     
     allocation_policy = batch_v1.AllocationPolicy()    
     instances = batch_v1.AllocationPolicy.InstancePolicyOrTemplate()    
-    instances.instance_template = new_template
+    if new_template:
+        instances.instance_template = new_template
     
     # MARK: InstanceTemplate 미사용으로 주석 처리    
     # policy = batch_v1.AllocationPolicy.InstancePolicy()
@@ -255,6 +258,59 @@ def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
     
     allocation_policy.network = network_policy
     
+    # 기존: OS 차이로 인한 이슈 발생
+    # job = {
+    #     "task_groups":[
+    #         {
+    #             "task_spec":{
+    #                 "runnables": [{                        
+    #                     # cloud-init을 대신 주입함
+    #                     # "environment": {
+    #                     #         "variables": env_vars
+    #                     #     },
+    #                     "container": {
+    #                         "image_uri": images_uri,                                                                                                                                         
+    #                     }
+    #                 }],                   
+    #                 # Should be compatible with instance_template             
+    #                 "compute_resource": { 
+    #                     "cpu_milli": 2000,
+    #                     "memory_mib": 7500,
+    #                 },
+    #             },
+    #             "task_count": 1,
+    #             "parallelism": 1            
+    #         },            
+    #     ],
+    #     "allocation_policy": {
+    #         "instances": [                
+    #             { 
+    #                 "instance_template": new_template,                    
+    #             }
+    #         ],
+    #         "location": {
+    #             "allowed_locations": [f"zones/{zone}" for zone in zones] # multi-zone
+    #                 # [f"zones/{zone}"]                    
+    #         },
+    #         "network": {
+    #             "network_interfaces": [
+    #                 {
+    #                     "network": f'projects/{project_id}/global/networks/{VPC_NAME}',
+    #                     "subnetwork": f'projects/{project_id}/regions/{region}/subnetworks/default'
+    #                 }
+    #             ]
+    #         },
+    #     },
+    #     "logs_policy": {
+    #         "destination": "CLOUD_LOGGING",
+    #     }
+    # }           
+    
+    # NEW: cloud-init 미주입
+    nvidia_gpu_options = "--volume /var/lib/nvidia/lib64:/usr/local/nvidia/lib64 --volume /var/lib/nvidia/bin:/usr/local/nvidia/bin --device /dev/nvidia0:/dev/nvidia0 --device /dev/nvidia-uvm:/dev/nvidia-uvm --device /dev/nvidiactl:/dev/nvidiactl -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64"
+    transformers_module_options = "-e TRANSFORMERS_CACHE=/app/src_ocr"
+    custom_options = " ".join([f"-e {k}={v}" for k, v in env_vars.items()])
+    options = f"{nvidia_gpu_options} {transformers_module_options} {custom_options}"
     job = {
         "task_groups":[
             {
@@ -263,12 +319,17 @@ def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
                         # cloud-init을 대신 주입함
                         # "environment": {
                         #         "variables": env_vars
-                        #     },
+                        #     },s
+                        
+                        # 그냥 아래처럼 넣어서 하면 됨. env_vars를 같이 넣어서 사용하자.
                         "container": {
-                            "image_uri": images_uri,                            
-                        }
+                            "image_uri": images_uri,                                                                                     
+                            "entrypoint": "",
+                            "volumes": [],
+                            "options": options
+                            }
                     }],                   
-                    # Should be compatible with instance_template             
+                    # Should be compatible with instance_template
                     "compute_resource": { 
                         "cpu_milli": 2000,
                         "memory_mib": 7500,
@@ -279,12 +340,24 @@ def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
             },            
         ],
         "allocation_policy": {
-            "instances": [                
-                { 
-                    "instance_template": new_template,
-                    
+            "instances": [
+            {
+                "install_gpu_drivers": True,
+                "policy": {
+                    # "provisioning_model": "SPOT",
+                    "machine_type": "n1-standard-2",
+                    "accelerators": [
+                        {
+                            "type_": "nvidia-tesla-t4",
+                            "count": "1"
+                        }
+                    ],
+                    "boot_disk": {
+                        "size_gb": "50"
+                    }
                 }
-            ],
+            }
+        ],
             "location": {
                 "allowed_locations": [f"zones/{zone}" for zone in zones] # multi-zone
                     # [f"zones/{zone}"]                    
@@ -329,7 +402,8 @@ def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
 def check_resource_errors(status_events):
     error_keywords = [
         "CODE_GCE_ZONE_RESOURCE_POOL_EXHAUSTED",
-        "does not have enough resources available"
+        "does not have enough resources available",
+        "inadequate quotas",
     ]
     
     for event in status_events:
@@ -339,7 +413,7 @@ def check_resource_errors(status_events):
                 return True, event.description
     return False, None
 
-def wait_until_job(job_name, new_template, max_wait_seconds=180):
+def wait_until_job(job_name, new_template, max_wait_seconds=600):
     client = batch_v1.BatchServiceClient()        
     enum_dict = {v: k for k, v in batch_v1.JobStatus.State.__dict__.items() if not k.startswith('_')}
     
@@ -350,18 +424,18 @@ def wait_until_job(job_name, new_template, max_wait_seconds=180):
             state = response.status.state
             
              # 리소스 에러 체크
-            has_error, err_msg = check_resource_errors(response.status.status_events)
+            has_error, error_msg = check_resource_errors(response.status.status_events)
             if has_error:
-                print(f"Resource error detected: {err_msg}")
+                print(f"Resource error detected: {error_msg}")
                 print("Terminating job...")
                 client.delete_job(name=job_name)
-                return False             
+                return False            
             
             if state == batch_v1.JobStatus.State.FAILED:
                 return False
             elif state == batch_v1.JobStatus.State.DELETION_IN_PROGRESS:
                 return False
-            elif state == batch_v1.JobStatus.State.RUNNING:
+            elif state == batch_v1.JobStatus.State.RUNNING:                
                 return True
             else:                                
                 print(f"Job status: {enum_dict[state]}. Waiting...")
@@ -374,8 +448,8 @@ def wait_until_job(job_name, new_template, max_wait_seconds=180):
     except Exception as e:
         print(f"Error getting job status: {str(e)}")
         return False
-    finally:
-        delete_template(PROJECT_ID, new_template)
+    # finally:
+    #     delete_template(PROJECT_ID, new_template)
 
 def deploy_review_jobs():
     region_to_zones = {}
@@ -397,17 +471,22 @@ def deploy_review_jobs():
     
     for region, zones in region_to_zones.items():
         print(f"Deploying to region: {region}")
+        # new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-ocr-template", region, env_vars)
+        new_template = None
         try:
-            new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-review-template", region, env_vars)
             job = create_gpu_job(PROJECT_ID, zones, new_template, env_vars)
             if wait_until_job(job.name, new_template):
-                print(f"Job completed successfully: {job.name}")
+                print(f"Job {job.name} is successfully RUNNNING: {region}")
                 break
             else:
-                print(f"Job failed. Move to the next region from {region}.")
-        finally:
-            # clean up
-            delete_template(PROJECT_ID, new_template)
+                print(f"Job failed. Move to the next region from {region}.")        
+        except Exception as e:
+            print(f"Error deploying to region {region}: {str(e)}")
+            # delete_template(PROJECT_ID, new_template)
+            continue
+        # finally:
+        #     # clean up
+        #     delete_template(PROJECT_ID, new_template)
             
     
 

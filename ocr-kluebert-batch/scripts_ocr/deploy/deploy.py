@@ -6,12 +6,13 @@ import time
 from typing import List
 
 from dotenv import load_dotenv
+from jinja2 import Environment, FileSystemLoader
+import yaml
 
 from google.cloud import batch_v1
 from google.api_core import retry
 from google.api_core import timeout as timeout_
 from google.cloud import compute_v1
-
 
 load_dotenv()
 REPOSITORY = os.environ['REPOSITORY']
@@ -33,9 +34,33 @@ no_retry = retry.Retry(
 # timeout 설정
 timeout = timeout_.ConstantTimeout(60.0)  # 30초
 
-def get_instance_template(project_id: str, template_name: str) -> compute_v1.InstanceTemplate:
-    """기존 instance template을 가져옵니다."""
-    client = compute_v1.InstanceTemplatesClient()
+def render_cloud_init_script(template_path: str, env_vars: dict):
+    """cloud-init 스크립트를 렌더링합니다."""
+    env = Environment(
+        loader=FileSystemLoader('.'),
+        keep_trailing_newline=True,
+        trim_blocks=True,
+        lstrip_blocks=True
+        )
+    
+    template = env.get_template(template_path)
+    rendered = template.render(
+        env_vars=env_vars,
+        IMAGE_URI=f'asia-northeast3-docker.pkg.dev/{PROJECT_ID}/{REPOSITORY}/{IMAGE_NAME}:{TAG}',
+    )
+    
+    try:
+        yaml.safe_load(rendered)
+        # Debug용 파일 출력
+        # with open("cloud-init-debug.yaml", "w", encoding='utf-8') as f:
+        #     f.write(rendered)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML after rendering: {e}")
+            
+    return rendered
+
+def get_instance_template(client: compute_v1.InstanceTemplatesClient, project_id: str, template_name: str) -> compute_v1.InstanceTemplate:
+    """기존 instance template을 가져옵니다."""    
     return client.get(project=project_id, instance_template=template_name)
 
 def create_modified_template(
@@ -43,7 +68,8 @@ def create_modified_template(
     source_template_name: str,
     new_template_name: str,
     new_subnet: str,
-    new_region: str
+    new_region: str,    
+    env_vars: dict
 ) -> compute_v1.Operation:
     """
     기존 template을 복제하고 subnet과 region을 변경합니다.
@@ -58,7 +84,7 @@ def create_modified_template(
     client = compute_v1.InstanceTemplatesClient()
     
     # 원본 템플릿 가져오기
-    source_template = get_instance_template(project_id, source_template_name)
+    source_template = get_instance_template(client, project_id, source_template_name)
     
     # 새로운 템플릿 객체 생성
     new_template = compute_v1.InstanceTemplate()    
@@ -105,6 +131,23 @@ def create_modified_template(
     new_template.properties.scheduling.instance_termination_action = "UNDEFINED_INSTANCE_TERMINATION_ACTION"
     new_template.properties.scheduling.provisioning_model = 'STANDARD'
     
+    
+    # MARK: cloud-init 주입
+    # metadata override
+    # cloud_init = render_cloud_init_script("cloud-init.yaml.j2", env_vars)
+    metadata = compute_v1.Metadata()
+    
+    # batch-cos-stable-official-20241030-00-p00 
+    
+    # metadata.items = [        
+    #         compute_v1.Items(
+    #             key='user-data',
+    #             value=cloud_init    
+    #         ),                
+    #     ]
+    
+    new_template.properties.metadata = metadata
+    
     # 새로운 템플릿 생성 요청
     operation = client.insert(
         project=project_id,
@@ -122,6 +165,7 @@ def clone_template_with_new_network(
     project_id,
     source_template, 
     new_region,
+    env_vars: dict
     ) -> str:
         
     new_template = f"temp-{new_region}-{source_template}"    
@@ -132,13 +176,14 @@ def clone_template_with_new_network(
         source_template_name=source_template,
         new_template_name=new_template,
         new_subnet=new_subnet,
-        new_region=new_region
+        new_region=new_region,
+        env_vars=env_vars
     )
     
     # 작업 완료 대기
     wait_for_operation(operation, project_id)
     print(f"Successfully created new template: {new_template}")
-    return new_template
+    return new_template            
     
 
 def delete_instance_template(project_id: str, template_name: str) -> compute_v1.Operation:
@@ -155,26 +200,22 @@ def delete_template(project_id, template_name):
     except Exception as e:
         print(f"Error deleting template: {str(e)}")
 
-def create_gpu_job(project_id, zones:List[str], new_template):
+def create_gpu_job(project_id, zones:List[str], new_template, env_vars:dict):
     client = batch_v1.BatchServiceClient()        
     region = "-".join(zones[0].split("-")[:2])
-    
-    env_vars = {
-        "DB_HOST": os.environ["DB_HOST"],
-        "DB_USER": os.environ["DB_USER"],
-        "DB_PASSWORD": os.environ["DB_PASSWORD"],
-        "DB_PORT": os.environ["DB_PORT"],
-        "DB_NAME": os.environ["DB_NAME"],
-        "BATCH_SIZE": os.environ["BATCH_SIZE"],
-        "TOPIC_TYPE": os.environ["TOPIC_TYPE"],
-        "CATEGORIES": os.environ["CATEGORIES"],
-    }    
+
+    print("env_vars:", env_vars.items())
       
     images_uri = f'asia-northeast3-docker.pkg.dev/{project_id}/{REPOSITORY}/{IMAGE_NAME}:{TAG}'    
 
-    print("env_vars:", env_vars.items())
     task_group = batch_v1.TaskGroup()
     task_spec = batch_v1.TaskSpec()
+    
+    # spec for task. Do not over InstanceTemplate
+    compute_resource = batch_v1.ComputeResource()
+    compute_resource.cpu_milli = 2000
+    compute_resource.memory_mib = 7500
+    
     runnables = batch_v1.Runnable()
     runnables.environment.variables = env_vars
     runnables.container = batch_v1.Runnable.Container()
@@ -183,7 +224,8 @@ def create_gpu_job(project_id, zones:List[str], new_template):
     
     allocation_policy = batch_v1.AllocationPolicy()    
     instances = batch_v1.AllocationPolicy.InstancePolicyOrTemplate()    
-    instances.instance_template = new_template
+    if new_template:
+        instances.instance_template = new_template
     
     # MARK: InstanceTemplate 미사용으로 주석 처리    
     # policy = batch_v1.AllocationPolicy.InstancePolicy()
@@ -216,48 +258,106 @@ def create_gpu_job(project_id, zones:List[str], new_template):
     
     allocation_policy.network = network_policy
     
+    # 기존: OS 차이로 인한 이슈 발생
+    # job = {
+    #     "task_groups":[
+    #         {
+    #             "task_spec":{
+    #                 "runnables": [{                        
+    #                     # cloud-init을 대신 주입함
+    #                     # "environment": {
+    #                     #         "variables": env_vars
+    #                     #     },
+    #                     "container": {
+    #                         "image_uri": images_uri,                                                                                                                                         
+    #                     }
+    #                 }],                   
+    #                 # Should be compatible with instance_template             
+    #                 "compute_resource": { 
+    #                     "cpu_milli": 2000,
+    #                     "memory_mib": 7500,
+    #                 },
+    #             },
+    #             "task_count": 1,
+    #             "parallelism": 1            
+    #         },            
+    #     ],
+    #     "allocation_policy": {
+    #         "instances": [                
+    #             { 
+    #                 "instance_template": new_template,                    
+    #             }
+    #         ],
+    #         "location": {
+    #             "allowed_locations": [f"zones/{zone}" for zone in zones] # multi-zone
+    #                 # [f"zones/{zone}"]                    
+    #         },
+    #         "network": {
+    #             "network_interfaces": [
+    #                 {
+    #                     "network": f'projects/{project_id}/global/networks/{VPC_NAME}',
+    #                     "subnetwork": f'projects/{project_id}/regions/{region}/subnetworks/default'
+    #                 }
+    #             ]
+    #         },
+    #     },
+    #     "logs_policy": {
+    #         "destination": "CLOUD_LOGGING",
+    #     }
+    # }           
+    
+    # NEW: cloud-init 미주입
+    nvidia_gpu_options = "--volume /var/lib/nvidia/lib64:/usr/local/nvidia/lib64 --volume /var/lib/nvidia/bin:/usr/local/nvidia/bin --device /dev/nvidia0:/dev/nvidia0 --device /dev/nvidia-uvm:/dev/nvidia-uvm --device /dev/nvidiactl:/dev/nvidiactl -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all --env LD_LIBRARY_PATH=/usr/local/nvidia/lib64"
+    transformers_module_options = "-e TRANSFORMERS_CACHE=/app/src_ocr"
+    custom_options = " ".join([f"-e {k}={v}" for k, v in env_vars.items()])
+    options = f"{nvidia_gpu_options} {transformers_module_options} {custom_options}"
     job = {
         "task_groups":[
             {
                 "task_spec":{
-                    "runnables": [{
-                        "environment": {
-                                "variables": env_vars
-                            },
+                    "runnables": [{                        
+                        # cloud-init을 대신 주입함. X
+                        # "environment": {
+                        #         "variables": env_vars
+                        #     },s
+                        
+                        # 그냥 아래처럼 넣어서 하면 됨. env_vars를 같이 넣어서 사용하자.
                         "container": {
-                            "image_uri": images_uri,                            
-                        }
-                    }],                                
+                            "image_uri": images_uri,                                                                                     
+                            "entrypoint": "",
+                            "volumes": [],
+                            "options": options
+                            }
+                    }],                   
+                    # Should be compatible with instance_template
+                    "compute_resource": { 
+                        "cpu_milli": 2000,
+                        "memory_mib": 7500,
+                    },
                 },
                 "task_count": 1,
                 "parallelism": 1            
             },            
         ],
         "allocation_policy": {
-            "instances": [                
-                { 
-                    "instance_template": new_template,
-                    
-                    # "policy": {
-                    #     "machine_type": "n1-standard-4",
-                    #     "boot_disk": {
-                    #         "type_": "pd-ssd",
-                    #         "size_gb": 50,
-                    #         # 기본으로 컨테이너 작업 시Batch-cos-stable-offical 사용
-                    #         # 'image': 'projects/cos-cloud/global/images/family/cos-stable' 
-                    #     },
-                    #     # 기본 metadata 사용 사례가 없음...
-                    #     # "metadata": metadata,
-                    #     "provisioning_model": "SPOT",                        
-                    #     "accelerators": [
-                    #         {
-                    #             "type_": "nvidia-tesla-t4",
-                    #             "count": 1
-                    #         }
-                    #     ]
-                    # }
+            "instances": [
+            {
+                "install_gpu_drivers": True,
+                "policy": {
+                    # "provisioning_model": "SPOT",
+                    "machine_type": "n1-standard-2",
+                    "accelerators": [
+                        {
+                            "type_": "nvidia-tesla-t4",
+                            "count": "1"
+                        }
+                    ],
+                    "boot_disk": {
+                        "size_gb": "50"
+                    }
                 }
-            ],
+            }
+        ],
             "location": {
                 "allowed_locations": [f"zones/{zone}" for zone in zones] # multi-zone
                     # [f"zones/{zone}"]                    
@@ -302,16 +402,18 @@ def create_gpu_job(project_id, zones:List[str], new_template):
 def check_resource_errors(status_events):
     error_keywords = [
         "CODE_GCE_ZONE_RESOURCE_POOL_EXHAUSTED",
-        "does not have enough resources available"
+        "does not have enough resources available",
+        "inadequate quotas",
     ]
     
     for event in status_events:
+        print(f"Event: {event.description}")
         for keyword in error_keywords:
             if keyword in event.description:
                 return True, event.description
     return False, None
 
-def wait_until_job(job_name, max_wait_seconds=1200):
+def wait_until_job(job_name, new_template, max_wait_seconds=600):
     client = batch_v1.BatchServiceClient()        
     enum_dict = {v: k for k, v in batch_v1.JobStatus.State.__dict__.items() if not k.startswith('_')}
     
@@ -333,21 +435,34 @@ def wait_until_job(job_name, max_wait_seconds=1200):
                 return False
             elif state == batch_v1.JobStatus.State.DELETION_IN_PROGRESS:
                 return False
-            elif state == batch_v1.JobStatus.State.RUNNING:
+            elif state == batch_v1.JobStatus.State.RUNNING:                
                 return True
             else:                                
                 print(f"Job status: {enum_dict[state]}. Waiting...")
                 time.sleep(10)
         
         print("Job did not complete within the time limit.")
+        # client.delete_job(name=job_name) # Debug 시에는 주석 처리
         return False
             
     except Exception as e:
         print(f"Error getting job status: {str(e)}")
         return False
+    # finally:
+    #     delete_template(PROJECT_ID, new_template)
 
-def deploy_ocr_jobs():
+def deploy_review_jobs():
     region_to_zones = {}
+    env_vars = {
+        "DB_HOST": os.environ["DB_HOST"],
+        "DB_USER": os.environ["DB_USER"],
+        "DB_PASSWORD": os.environ["DB_PASSWORD"],
+        "DB_PORT": os.environ["DB_PORT"],
+        "DB_NAME": os.environ["DB_NAME"],
+        "BATCH_SIZE": os.environ["BATCH_SIZE"],
+        "TOPIC_TYPE": os.environ["TOPIC_TYPE"],
+        "CATEGORIES": os.environ["CATEGORIES"],
+    }    
     for zone in ZONES.split(","):
         region = "-".join(zone.split("-")[:2])
         if region not in region_to_zones:
@@ -356,15 +471,24 @@ def deploy_ocr_jobs():
     
     for region, zones in region_to_zones.items():
         print(f"Deploying to region: {region}")
-        new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-ocr-template", region)
-        job = create_gpu_job(PROJECT_ID, zones, new_template)
-        if wait_until_job(job.name):
-            print(f"Job completed successfully: {job.name}")
-            break
-        else:
-            print(f"Job failed. Move to the next region from {region}.")
-        # clean up
-        delete_template(PROJECT_ID, new_template)
+        # new_template = clone_template_with_new_network(PROJECT_ID, "batch-kluebert-ocr-template", region, env_vars)
+        new_template = None
+        try:
+            job = create_gpu_job(PROJECT_ID, zones, new_template, env_vars)
+            if wait_until_job(job.name, new_template):
+                print(f"Job {job.name} is successfully RUNNNING: {region}")
+                break
+            else:
+                print(f"Job failed. Move to the next region from {region}.")        
+        except Exception as e:
+            print(f"Error deploying to region {region}: {str(e)}")
+            # delete_template(PROJECT_ID, new_template)
+            continue
+        # finally:
+        #     # clean up
+        #     delete_template(PROJECT_ID, new_template)
+            
+    
 
 if __name__ == "__main__":
-    deploy_ocr_jobs()
+    deploy_review_jobs()

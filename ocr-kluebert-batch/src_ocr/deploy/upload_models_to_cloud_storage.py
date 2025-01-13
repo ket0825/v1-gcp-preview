@@ -1,7 +1,3 @@
-"""
-Depreciated: Can't load .bin files from GCS.
-"""
-
 from pathlib import Path
 from google.cloud.exceptions import NotFound
 from google.cloud.storage import Client, transfer_manager
